@@ -1,0 +1,390 @@
+---
+title: "mark"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r cars,eval=T}
+library(randomForest)
+library(randomForestExplainer)
+library(corrplot)
+library(rpart)
+library(knitr)
+library(MASS)
+library(dplyr)
+library(kableExtra)
+library(glmnet)
+library(plotmo)
+library(cvTools)
+library(data.table)
+rm(list=ls())
+data<-read.table("/Users/fuzijie/Desktop/key/R-files/project/5470 Machine Learning/data.csv",sep=",",header=T,stringsAsFactors=F)
+colnames(data)<-c("name","rank_in_finals","top3_or_not","final_or_not","seasons",
+                  "sex","no_of_top3","no_of_top1","in_group","start","nation","time",
+                  "professional","mean","median","mode","std","regular","best","worst")
+data[is.na(data)]<-0;data$nation<-NULL
+data$sex<-ifelse(data$sex=="男",1,0);data$rank_in_finals<-ifelse(!data$rank_in_finals,10,data$rank_in_finals)
+data$final_or_not<-NULL
+data_train<-data[data$seasons<=5,];data_test<-data[data$seasons==6,]
+# res_train<-data_train[,1:4];res_test<-data_test[,1:4]
+ft_train<-data_train[,5:length(data[1,])];ft_test<-data_test[,5:length(data[1,])]
+## correlation ##
+corrplot(cor(ft_train),order="hclust",addrect = 12)
+## drop mode and median ##
+ft_train$median<-ft_test$median<-ft_train$mode<-ft_test$median<-NULL
+data_train$median<-data_train$mode<-data_test$median<-data_test$mode<-NULL
+
+#########################################
+########### Direct Prediction ###########
+#########################################
+
+## Ridge Regression ##
+ridge_cv<-cv.glmnet(x=as.matrix(data_train[,-(1:4)]),y=data_train$rank_in_finals,
+                    type.measure="mse",foldid=data_train$seasons,alpha=0)
+plot(ridge_cv)
+score_ridge<-predict(ridge_cv, new=as.matrix(data_test[,-(1:4)]))
+score_ridge
+score_ridge[rank(score_ridge)>3]<-10
+rp<-rank(score_ridge,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders #3/3
+
+## Lasso ##
+lasso_cv<-cv.glmnet(x=as.matrix(data_train[,-(1:4)]),y=data_train$rank_in_finals,
+                    type.measure="mse",foldid=data_train$seasons,alpha=1)
+plot(lasso_cv)
+score_lasso<-predict(lasso_cv, new=as.matrix(data_test[,-(1:4)]))
+score_lasso
+score_lasso[rank(score_lasso)>3]<-10
+rp<-rank(score_lasso,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders #2/3
+
+## Random Forest ##
+# top 3 #
+rf_rank<-randomForest(x=data_train[,-(1:4)],y=data_train$rank_in_finals)
+score_rf<-predict(rf_rank,newdata=data_test[,-(1:4)])
+score_rf
+score_rf[rank(score_rf)>3]<-10
+rp<-rank(score_rf,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders #1/3
+
+# names(sort(rf_top3$predicted[res_train$seasons==1],decreasing=T)[1:3])
+# rownames(res_train[res_train$seasons==1,])[which(as.logical(res_train[res_train$seasons==1,]$top3_or_not))]
+# names(sort(rf_top3$predicted[res_train$seasons==2],decreasing=T)[1:3])
+# rownames(res_train[res_train$seasons==2,])[which(as.logical(res_train[res_train$seasons==2,]$top3_or_not))]
+# names(sort(rf_top3$predicted[res_train$seasons==3],decreasing=T)[1:3])
+# rownames(res_train[res_train$seasons==3,])[which(as.logical(res_train[res_train$seasons==3,]$top3_or_not))]
+# names(sort(rf_top3$predicted[res_train$seasons==4],decreasing=T)[1:3])
+# rownames(res_train[res_train$seasons==4,])[which(as.logical(res_train[res_train$seasons==4,]$top3_or_not))]
+# ifelse(rank(-predict(rf_top3,newdata=ft_test))<=3,1,0)
+# 
+# data[as.numeric(names(sort(predict(rf_top3,newdata=ft_test),decreasing=T)[1:3])),]$name
+# data$name[as.numeric(rownames(res_test[which(as.logical(res_test$top3_or_not)),]))]
+# 
+# rf_rank<-randomForest(x=data.frame(ft_train,top3_or_not=res_train$top3_or_not),y=res_train$rank_in_finals,localImp=T)
+# pd_rank<-predict(rf_rank,newdata=data.frame(ft_test,top3_or_not=ifelse(rank(-predict(rf_top3,newdata=ft_test))<=3,1,0)))
+# pd_rank<-rank(pd_rank)[rank(pd_rank)<=3]
+# names(pd_rank)<-data$name[as.numeric(names(pd_rank))];pd_rank
+# explain_forest(rf_rank)
+
+## CART ##
+rtree_top3<-rpart(rank_in_finals~.,data=data_train[,c(-1,-3,-4)])
+score_rtree<-predict(rtree_top3,newdata=data_test[,-(1:4)])
+score_rtree[rank(score_rtree)>3]<-10
+rp<-rank(score_rtree,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders #2/3
+
+
+#########################################
+########## Two-step Prediction ##########
+#########################################
+
+## Ridge Regression ##
+model<-cv.glmnet(x=as.matrix(data_train[,-(1:4)]),y=data_train$top3_or_not,
+                 type.measure="mse",nfolds=4,alpha=0)
+trained<-data_train$top3_or_not
+predicted<-predict(model,new=as.matrix(data_test[,-(1:4)]))
+predicted<-as.numeric(rank(-predicted)<=3)
+model<-cv.glmnet(x=as.matrix(cbind(data_train[,-(1:4)],new=trained)),y=data_train$rank_in_finals,
+                 type.measure="mse",nfolds=4,alpha=0)
+predicted<-predict(model,new=as.matrix(cbind(data_test[,-(1:4)],new=predicted)))
+predicted[rank(predicted)>3]<-10
+MSPE<-mspe(data_test$rank_in_finals,predicted)
+RMSPE<-rmspe(data_test$rank_in_finals,predicted)
+MAPE<-mape(data_test$rank_in_finals,predicted)
+rp<-rank(predicted,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders #3/3
+
+## Lasso ##
+model<-cv.glmnet(x=as.matrix(data_train[,-(1:4)]),y=data_train$top3_or_not,
+                 type.measure="mse",nfolds=4,alpha=1)
+trained<-data_train$top3_or_not
+predicted<-predict(model,new=as.matrix(data_test[,-(1:4)]))
+predicted<-as.numeric(rank(-predicted)<=3)
+model<-cv.glmnet(x=as.matrix(cbind(data_train[,-(1:4)],new=trained)),y=data_train$rank_in_finals,
+                 type.measure="mse",nfolds=4,alpha=1)
+predicted<-predict(model,new=as.matrix(cbind(data_test[,-(1:4)],new=predicted)))
+predicted[rank(predicted)>3]<-10
+MSPE<-mspe(data_test$rank_in_finals,predicted)
+RMSPE<-rmspe(data_test$rank_in_finals,predicted)
+MAPE<-mape(data_test$rank_in_finals,predicted)
+rp<-rank(predicted,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders #2/3 3/3
+
+## Random Forest ##
+model<-randomForest(data_train[,-(1:4)],data_train$top3_or_not)
+trained<-predict(model)
+trained<-data_train$top3_or_not
+predicted<-predict(model,newdata=data_test[,-(1:4)])
+predicted<-as.numeric(rank(-predicted)<=3)
+model<-randomForest(cbind(data_train[,-(1:4)],new=trained),
+                    data_train$rank_in_finals)
+predicted<-predict(model,newdata=cbind(data_test[,-(1:4)],new=predicted))
+predicted[rank(predicted)>3]<-10
+MSPE<-mspe(data_test$rank_in_finals,predicted)
+RMSPE<-rmspe(data_test$rank_in_finals,predicted)
+MAPE<-mape(data_test$rank_in_finals,predicted)
+rp<-rank(predicted,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders#3/3
+
+## CART ##
+model<-rpart(top3_or_not~.,data=data_train[,c(-1,-2,-4)],method="anova")
+trained<-data_train$top3_or_not
+predicted<-predict(model,newdata=data_test[,-(1:4)])
+predicted<-as.numeric(rank(-predicted)<=3)
+model<-rpart(rank_in_finals~.,data=cbind(data_train[,c(-1,-3,-4)],new=trained),method="anova")
+predicted<-predict(model,newdata=cbind(data_test[,-(1:4)],new=predicted))
+predicted[rank(predicted)>3]<-10
+MSPE<-mspe(data_test$rank_in_finals,predicted)
+RMSPE<-rmspe(data_test$rank_in_finals,predicted)
+MAPE<-mape(data_test$rank_in_finals,predicted)
+rp<-rank(predicted,ties.method="first")
+rts<-rank(data_test$rank_in_finals,ties.method="first")
+corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+corders#0/3
+
+
+crossvalidate<-function(data, Model, methods){
+  # data is the training set with the "seasons" column
+  # k is the number of folds we have
+  # model is a string describing a linear regression model formula
+  # methods is a string with the name of the score column we want to predict
+  # random is a logical; do we have random effects in the model?
+  
+  # Initialize empty list for recording performances
+  performances<-c()
+  k<-length(unique(data$seasons))
+  # One iteration per fold
+  for (fold in 1:k)
+  {
+    # Create training set for this iteration
+    # Subset all the datapoints where seasons does not match the current fold
+    training_set <- data[data$seasons != fold,]
+    # training_set<-data_train[data_train$seasons!=fold,]
+    # Create test set for this iteration
+    # Subset all the datapoints where seasons matches the current fold
+    testing_set <- data[data$seasons == fold,]
+    # testing_set<-data_train[data_train$seasons==fold,]
+    ## Train model
+    
+    # If there is a random effect,
+    # use lmer() to train model
+    # else use lm()
+     if(Model=="randomforest")
+     {
+       if(methods=="directly")
+       {
+         model<-randomForest(training_set[,-(1:4)],training_set$rank_in_finals)
+         predicted<-predict(model,newdata=testing_set[,-(1:4)])
+         predicted[rank(predicted)>3]<-10
+         MSPE<-mspe(testing_set$rank_in_finals,predicted)
+         RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+         MAPE<-mape(testing_set$rank_in_finals,predicted)
+         rp<-rank(predicted,ties.method="first")
+         rts<-rank(testing_set$rank_in_finals,ties.method="first")
+         corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+         performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+       }
+       if(methods=="two-step")
+       {
+         model<-randomForest(training_set[,-(1:4)],training_set$top3_or_not)
+         trained<-training_set$top3_or_not
+         predicted<-predict(model,newdata=testing_set[,-(1:4)])
+         predicted<-as.numeric(rank(-predicted)<=3)
+         model<-randomForest(cbind(training_set[,-(1:4)],new=trained),
+                             training_set$rank_in_finals)
+         predicted<-predict(model,newdata=cbind(testing_set[,-(1:4)],new=predicted))
+         predicted[rank(predicted)>3]<-10
+         MSPE<-mspe(testing_set$rank_in_finals,predicted)
+         RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+         MAPE<-mape(testing_set$rank_in_finals,predicted)
+         rp<-rank(predicted,ties.method="first")
+         rts<-rank(testing_set$rank_in_finals,ties.method="first")
+         corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+         performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+      }
+     }
+     if(Model=="cart")
+     {
+      if(methods=="directly")
+      {
+        model<-rpart(rank_in_finals~.,data=training_set[,c(-1,-3,-4)],method="anova")
+        predicted<-predict(model,newdata=testing_set[,-(1:4)])
+        predicted[rank(predicted)>3]<-10
+        MSPE<-mspe(testing_set$rank_in_finals,predicted)
+        RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+        MAPE<-mape(testing_set$rank_in_finals,predicted)
+        rp<-rank(predicted,ties.method="first")
+        rts<-rank(testing_set$rank_in_finals,ties.method="first")
+        corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+        performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+      }
+      if(methods=="two-step")
+      {
+        model<-rpart(top3_or_not~.,data=training_set[,c(-1,-2,-4)],method="anova")
+        trained<-training_set$top3_or_not
+        predicted<-predict(model,newdata=testing_set[,-(1:4)])
+        predicted<-as.numeric(rank(-predicted)<=3)
+        model<-rpart(rank_in_finals~.,data=cbind(training_set[,c(-1,-3,-4)],new=trained),method="anova")
+        predicted<-predict(model,newdata=cbind(testing_set[,-(1:4)],new=predicted))
+        predicted[rank(predicted)>3]<-10
+        MSPE<-mspe(testing_set$rank_in_finals,predicted)
+        RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+        MAPE<-mape(testing_set$rank_in_finals,predicted)
+        rp<-rank(predicted,ties.method="first")
+        rts<-rank(testing_set$rank_in_finals,ties.method="first")
+        corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+        performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+      }
+     }
+    if(Model=="ridge")
+    {
+      if(methods=="directly")
+      {
+        model<-cv.glmnet(x=as.matrix(training_set[,-(1:4)]),y=training_set$rank_in_finals,
+                         type.measure="mse",nfolds=4,alpha=0)
+        predicted<-predict(model,new=as.matrix(testing_set[,c(-(1:4))]))
+        predicted[rank(predicted)>3]<-10
+        MSPE<-mspe(testing_set$rank_in_finals,predicted)
+        RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+        MAPE<-mape(testing_set$rank_in_finals,predicted)
+        rp<-rank(predicted,ties.method="first")
+        rts<-rank(testing_set$rank_in_finals,ties.method="first")
+        corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+        performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+      }
+      if(methods=="two-step")
+      {
+        model<-cv.glmnet(x=as.matrix(training_set[,-(1:4)]),y=training_set$top3_or_not,
+                         type.measure="mse",nfolds=4,alpha=0)
+        trained<-training_set$top3_or_not
+        predicted<-predict(model,new=as.matrix(testing_set[,-(1:4)]))
+        predicted<-as.numeric(rank(-predicted)<=3)
+        model<-cv.glmnet(x=as.matrix(cbind(training_set[,-(1:4)],new=trained)),y=training_set$rank_in_finals,
+                         type.measure="mse",nfolds=4,alpha=0)
+        predicted<-predict(model,new=as.matrix(cbind(testing_set[,-(1:4)],new=predicted)))
+        predicted[rank(predicted)>3]<-10
+        MSPE<-mspe(testing_set$rank_in_finals,predicted)
+        RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+        MAPE<-mape(testing_set$rank_in_finals,predicted)
+        rp<-rank(predicted,ties.method="first")
+        rts<-rank(testing_set$rank_in_finals,ties.method="first")
+        corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+        performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+      }
+    }
+    if(Model=="lasso")
+    {
+      if(methods=="directly")
+      {
+        model<-cv.glmnet(x=as.matrix(training_set[,-(1:4)]),y=training_set$rank_in_finals,
+                         type.measure="mse",nfolds=4,alpha=1)
+        predicted<-predict(model,new=as.matrix(testing_set[,c(-(1:4))]))
+        predicted[rank(predicted)>3]<-10
+        MSPE<-mspe(testing_set$rank_in_finals,predicted)
+        RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+        MAPE<-mape(testing_set$rank_in_finals,predicted)
+        rp<-rank(predicted,ties.method="first")
+        rts<-rank(testing_set$rank_in_finals,ties.method="first")
+        corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+        performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+      }
+      if(methods=="two-step")
+      {
+        model<-cv.glmnet(x=as.matrix(training_set[,-(1:4)]),y=training_set$top3_or_not,
+                         type.measure="mse",nfolds=4,alpha=1)
+        trained<-training_set$top3_or_not
+        predicted<-predict(model,new=as.matrix(testing_set[,-(1:4)]))
+        predicted<-as.numeric(rank(-predicted)<=3)
+        model<-cv.glmnet(x=as.matrix(cbind(training_set[,-(1:4)],new=trained)),y=training_set$rank_in_finals,
+                         type.measure="mse",nfolds=4,alpha=1)
+        predicted<-predict(model,new=as.matrix(cbind(testing_set[,-(1:4)],new=predicted)))
+        predicted[rank(predicted)>3]<-10
+        MSPE<-mspe(testing_set$rank_in_finals,predicted)
+        RMSPE<-rmspe(testing_set$rank_in_finals,predicted)
+        MAPE<-mape(testing_set$rank_in_finals,predicted)
+        rp<-rank(predicted,ties.method="first")
+        rts<-rank(testing_set$rank_in_finals,ties.method="first")
+        corders<-sum(rts[which(rp<=3)]==rp[which(rp<=3)])
+        performances<-rbind(performances,c(MSPE=MSPE,RMSPE=RMSPE,MAPE=MAPE,correct_count=corders))
+      }
+    }
+  }
+  # Return the mean of the recorded RMSEs
+  return(performances)
+}
+crossvalidate(data_train,Model="randomforest",methods="directly")
+crossvalidate(data_train,Model="randomforest",methods="two-step")
+crossvalidate(data_train,Model="cart",methods="directly")
+crossvalidate(data_train,Model="cart",methods="two-step")
+crossvalidate(data_train,Model="ridge",methods="directly")
+crossvalidate(data_train,Model="ridge",methods="two-step")
+crossvalidate(data_train,Model="lasso",methods="directly")
+crossvalidate(data_train,Model="lasso",methods="two-step")
+
+fitridge<-glmnet(x=as.matrix(data_test[,c(-(1:3),-dim(data_test)[2])]),y=data_test$top3_or_not,alpha=0)
+fitlasso<-glmnet(x=as.matrix(data_test[,c(-(1:3),-dim(data_test)[2])]),y=data_test$top3_or_not,alpha=1)
+plot(fitridge,xvar="lambda",label=T)
+plot(fitlasso,xvar="lambda",label=T)
+plot_glmnet(fitlasso)
+plotCoeffEvolution=function(penalizedGlm,type='L1')
+{
+  require(ggplot2)
+  lambda=penalizedGlm$lambda
+  coeff=as.matrix(penalizedGlm$beta)
+  rowName=rownames(coeff)
+  coeff=data.table(coeff)
+  coeff[,name:=rowName]
+  coeff=melt(coeff,id.vars = 'name')
+  coeff[,variable:=rep(lambda,each=length(unique(name)))]
+  ggplot(coeff,aes(x=variable,y=value,color=name))+
+    geom_line()+
+    xlab(paste0(type,' regularisation'))+
+    ylab('Value of coefficient')+
+    scale_x_log10()+
+    theme_minimal()
+}
+plotCoeffEvolution(fitlasso,"L2")
+
+
+```
+
+
